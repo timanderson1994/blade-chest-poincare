@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-def data_parse(filename, numPlayers, trainSplit = 0.8):
+def data_parse(filename, trainSplit = 0.5, returnMatches = False):
     '''
     Data parsing function - usable for all datasets in Chen (2016)
     Input:
@@ -19,29 +19,31 @@ def data_parse(filename, numPlayers, trainSplit = 0.8):
     D_train = []
     D_test = []
     
-    playerCount = 0
+    matchCount = 0
     
     for i, line in enumerate(lines):
-        if (line[0:6]=='Player') or (line[0:3]=='num'):
+        
+        if (line[0:6]=='Player'):
             pass
+        elif line[0:3]=='num':
+            part1, part2 = line.split()
+            if line[0:10] == 'numPlayers':
+                numPlayers = int(part2)
+            if line[0:8] == 'numGames':
+                numGames = int(part2)
         else:
             part1, part2 = line.split()
             player1, player2 = part1.split(':')
             win1, win2 = part2.split(':')
+            match_tuple = (int(player1), int(player2), int(win1), int(win2))
             
-            # Add to overall list of matches
-            if int(player1)< int(player2):
-                match_tuple = (int(player1), int(player2), int(win1), int(win2))
-            else:
-                match_tuple = (int(player2), int(player1), int(win2), int(win1))
-            
-            if playerCount < numPlayers*trainSplit:
+            if matchCount < numGames*trainSplit:
                 matches_train.append(match_tuple)
             else:
                 matches_test.append(match_tuple)
             
-            playerCount+=1
-    
+            matchCount+=1
+
     # Build training set
     winsA = []
     winsB = []
@@ -84,8 +86,10 @@ def data_parse(filename, numPlayers, trainSplit = 0.8):
         playerA, playerB = matchUps[i]
         D_test.append((playerA, playerB, winsA[i], winsB[i]))
     
-    return matches_train, D_train, matches_test, D_test
-    
+    if returnMatches:
+        return numPlayers, numGames, matches_train, D_train, matches_test, D_test
+    else:
+        return numPlayers, numGames, D_train, D_test
     
 def sigmoid(x):
     out = 1 / (1 + np.exp(-x))
@@ -299,21 +303,7 @@ def SGD_update(theta, dtheta, alpha, mode = 'Euclidean'):
         
     return thetaNew
 
-def naive_pred(D):
-    '''
-    Input:
-        D - datapoints for predictions
-    '''
-    acc = 0
-    Nprime = 0
-    
-    for d in D:
-        playerAnum, playerBnum, na, nb = d
-        prob = (na + 1) / (na + nb + 2)
-        acc += na*int(prob > 0.5) + nb*int(prob <= 0.5)
-        Nprime += na + nb
-    
-    return acc/Nprime
+
 
 def evaluate(y, yhat):
     '''
@@ -337,18 +327,24 @@ class blade_chest:
     
     '''
     
-    def __init__(self, numberOfPlayers, dim, bias = True, initParam = 1e-2):
+    def __init__(self, numberOfPlayers, dim, bias = True, initParam = 1e-2, BT = False):
         '''
         Initialize the blade_chest class
         Inputs:
             numberOfPlayers - total number of players for which to initialize parameters
             dim - dimensionality of the embeddings
         '''
-        
-        self.blades = initParam*(np.random.uniform(size = (numberOfPlayers,dim)) - 0.5)
-        self.chests = initParam*(np.random.uniform(size = (numberOfPlayers,dim)) - 0.5)
-        self.gammas = np.zeros(numberOfPlayers)
-        self.bias = bias
+        self.BT = BT
+        if self.BT:
+            self.blades = np.zeros((numberOfPlayers,dim))
+            self.chests = np.zeros((numberOfPlayers,dim))
+            self.gammas = initParam*(np.random.uniform(size = (numberOfPlayers)) - 0.5)
+            self.bias = bias
+        else:
+            self.blades = initParam*(np.random.uniform(size = (numberOfPlayers,dim)) - 0.5)
+            self.chests = initParam*(np.random.uniform(size = (numberOfPlayers,dim)) - 0.5)
+            self.gammas = np.zeros(numberOfPlayers)
+            self.bias = True
         
     
     def SGD_optimizer(self, playerAnum, playerBnum, wins, alpha, mode = 'Euclidean', reg = 0):
@@ -373,8 +369,9 @@ class blade_chest:
         dblade, dchest, dgamma = dplayerA
         dRegBlade, dRegChest = ddist(self.blades[playerAnum,:], self.chests[playerAnum,:], mode = mode)
         
-        self.blades[playerAnum,:] = SGD_update(self.blades[playerAnum,:], dblade+reg*dRegBlade, alpha, mode = mode)
-        self.chests[playerAnum,:] = SGD_update(self.chests[playerAnum,:], dchest+reg*dRegChest, alpha, mode = mode)
+        if not self.BT:
+            self.blades[playerAnum,:] = SGD_update(self.blades[playerAnum,:], dblade+reg*dRegBlade, alpha, mode = mode)
+            self.chests[playerAnum,:] = SGD_update(self.chests[playerAnum,:], dchest+reg*dRegChest, alpha, mode = mode)
         
         if self.bias:
             self.gammas[playerAnum] = SGD_update(self.gammas[playerAnum], dgamma, alpha)
@@ -384,8 +381,9 @@ class blade_chest:
         dblade, dchest, dgamma = dplayerB
         dRegBlade, dRegChest = ddist(self.blades[playerBnum,:], self.chests[playerBnum,:], mode = mode)
         
-        self.blades[playerBnum,:] = SGD_update(self.blades[playerBnum,:], dblade+reg*dRegBlade, alpha, mode = mode)
-        self.chests[playerBnum,:] = SGD_update(self.chests[playerBnum,:], dchest+reg*dRegChest, alpha, mode = mode)
+        if not self.BT:
+            self.blades[playerBnum,:] = SGD_update(self.blades[playerBnum,:], dblade+reg*dRegBlade, alpha, mode = mode)
+            self.chests[playerBnum,:] = SGD_update(self.chests[playerBnum,:], dchest+reg*dRegChest, alpha, mode = mode)
         
         if self.bias:
             self.gammas[playerBnum] = SGD_update(self.gammas[playerBnum], dgamma, alpha)
@@ -414,4 +412,39 @@ class blade_chest:
         
         return acc/Nprime
     
+    
+    def naive_train(self, numPlayers, Dtrain):
+        '''
+        Input:
+            D - datapoints for predictions
+        '''
         
+        numer = np.ones((numPlayers, numPlayers))
+        denom = 2*np.ones((numPlayers, numPlayers))
+
+        for d in Dtrain:
+            playerAnum, playerBnum, na, nb = d
+            numer[playerAnum, playerBnum] += na
+            denom[playerAnum, playerBnum] += na + nb
+            numer[playerBnum, playerAnum] += nb
+            denom[playerBnum, playerAnum] += na + nb
+
+        self.naiveMtx = numer / denom
+    
+    def naive_eval(self, Deval):
+        '''
+        Input:
+            D - datapoints for predictions
+        '''
+        matchMtx = self.naiveMtx
+        acc = 0
+        Nprime = 0
+
+        for d in Deval:
+            playerAnum, playerBnum, na, nb = d
+            acc += na*int(matchMtx[playerAnum, playerBnum] > 0.5) + nb*int(matchMtx[playerAnum, playerBnum] <= 0.5)
+            Nprime += na + nb
+
+        return acc/Nprime
+    
+    
